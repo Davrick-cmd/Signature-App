@@ -27,6 +27,15 @@ async function initDatabase() {
 
     // Optional first admin for fresh installs, e.g. a hosted demo
     const { BOOTSTRAP_ADMIN_EMAIL: email, BOOTSTRAP_ADMIN_PASSWORD: password } = process.env;
+    if (email && password && process.env.BOOTSTRAP_ADMIN_RESET === 'true') {
+      // Recovery: set this admin's password from the environment, then remove BOOTSTRAP_ADMIN_RESET
+      const { hashPassword } = require('../auth');
+      const [result] = await connection.query(
+        "UPDATE users SET password_hash = ?, role = 'admin', status = 'active' WHERE email = ?",
+        [await hashPassword(password), email.toLowerCase()]
+      );
+      if (result.affectedRows) console.log(`✅ Reset password for admin ${email}`);
+    }
     if (email && password) {
       const [admins] = await connection.query("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
       if (admins.length === 0) {

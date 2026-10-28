@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../config/api';
+import BrandingSettings from './BrandingSettings';
 import { 
   Users, 
   FileText, 
@@ -546,6 +547,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
       {/* Settings Tab */}
       {activeTab === 'settings' && (
         <div className="space-y-8">
+          <BrandingSettings />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* System Settings */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">

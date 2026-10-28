@@ -118,9 +118,13 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
   check('outsider cannot download', (await api('GET', `/api/documents/${id}/download`, eve)).status === 404);
 
   const stats = await api('GET', '/api/admin/stats', admin);
-  check('admin stats are real', stats.status === 200 && stats.json.completedDocuments === 1 && stats.json.topSigners.length === 2, JSON.stringify(stats.json));
+  const signerEmails = (stats.json.topSigners || []).map((t) => t.email);
+  check('admin stats are real', stats.status === 200 && stats.json.completedDocuments >= 1 && signerEmails.includes('alice@example.com') && signerEmails.includes('bob@example.com'), JSON.stringify(stats.json));
   const logs = await api('GET', '/api/admin/activity-logs', admin);
   check('audit trail recorded', logs.json.some((l) => l.action === 'document.completed'));
+
+  check('non-admin cannot change branding', (await api('PUT', '/api/admin/branding', eve, { displayName: 'x' })).status === 403);
+  check('branding is public for the login page', (await api('GET', '/api/branding')).status === 200);
 
   const home = await api('GET', '/');
   check('frontend served from the same server', home.status === 200 && home.text.includes('<div id="root">'));

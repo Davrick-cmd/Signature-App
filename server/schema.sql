@@ -59,3 +59,12 @@ CREATE TABLE IF NOT EXISTS document_files (
     PRIMARY KEY (document_id, kind),
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
+
+-- Per-installation branding (customer logo, display name)
+CREATE TABLE IF NOT EXISTS app_settings (
+    name VARCHAR(64) PRIMARY KEY,
+    text_value TEXT NULL,
+    blob_value LONGBLOB NULL,
+    mime_type VARCHAR(100) NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);

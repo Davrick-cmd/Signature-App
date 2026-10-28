@@ -13,6 +13,17 @@ Self-hosted electronic signature platform. Upload a PDF, place signature fields,
 - **Admin console**: users, roles, usage statistics and an activity log
 - **Audit trail**: every upload, send, view, signature, download and login, with IP and user agent
 
+## Customer branding
+
+Each installation can show its own logo and product name (for example "Acme Sign") on the sign-in page, the header and the browser tab. An admin sets these in **Admin → Settings → Branding**, or from the command line:
+
+```bash
+cd server
+SEED_BASE=https://customer-app.example.com SEED_ADMIN_EMAIL=… SEED_ADMIN_PASSWORD=…   npm run set-branding -- path/to/logo.png "Acme Sign"
+```
+
+Branding is stored in the database, so it survives restarts and redeploys. "Powered by SignFlow" appears in small type under the sign-in form.
+
 ## Security model
 
 - Server-issued, signed session tokens (JWT); identity is never taken from the request body

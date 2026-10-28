@@ -277,6 +277,39 @@ app.post('/api/auth/login',
   }
 );
 
+// Branding is public so the login page can show the customer's logo
+async function getBranding() {
+  const [rows] = await db.query(
+    "SELECT name, text_value, mime_type, updated_at, blob_value IS NOT NULL AS has_blob FROM app_settings WHERE name IN ('display_name', 'logo')"
+  );
+  const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+  const logo = byName.logo && byName.logo.has_blob ? byName.logo : null;
+  return {
+    appName: config.appName,
+    displayName: byName.display_name?.text_value || config.appName,
+    logoUrl: logo ? `/api/branding/logo?v=${new Date(logo.updated_at).getTime()}` : null,
+  };
+}
+
+app.get('/api/branding', async (req, res, next) => {
+  try {
+    res.json(await getBranding());
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/branding/logo', async (req, res, next) => {
+  try {
+    const [rows] = await db.query("SELECT blob_value, mime_type FROM app_settings WHERE name = 'logo'");
+    if (!rows[0]?.blob_value) return res.status(404).json({ error: 'No logo set' });
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.type(rows[0].mime_type).send(rows[0].blob_value);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Everything below requires a signed-in user
 // ---------------------------------------------------------------------------
@@ -800,6 +833,52 @@ app.delete('/api/users/:id', requireAdmin, [param('id').isInt()], validate, asyn
     await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
     await logAuditEvent(null, 'user.deleted', req.user.email, req, { userId: req.params.id });
     res.json({ success: true, message: 'User deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (['image/png', 'image/jpeg'].includes(file.mimetype)) return cb(null, true);
+    cb(Object.assign(new Error('Logo must be a PNG or JPEG image'), { status: 400 }));
+  },
+});
+
+app.put('/api/admin/branding', requireAdmin, logoUpload.single('logo'), async (req, res, next) => {
+  try {
+    if (req.file) {
+      if (!ALLOWED_MIME[req.file.mimetype](req.file.buffer)) {
+        return res.status(400).json({ error: 'File content does not match its type' });
+      }
+      await db.query(
+        `INSERT INTO app_settings (name, blob_value, mime_type) VALUES ('logo', ?, ?)
+         ON DUPLICATE KEY UPDATE blob_value = VALUES(blob_value), mime_type = VALUES(mime_type), updated_at = NOW()`,
+        [req.file.buffer, req.file.mimetype]
+      );
+    }
+    if (typeof req.body?.displayName === 'string') {
+      const displayName = req.body.displayName.trim().slice(0, 80);
+      await db.query(
+        `INSERT INTO app_settings (name, text_value) VALUES ('display_name', ?)
+         ON DUPLICATE KEY UPDATE text_value = VALUES(text_value)`,
+        [displayName || null]
+      );
+    }
+    await logAuditEvent(null, 'branding.updated', req.user.email, req, { logo: !!req.file, displayName: req.body?.displayName });
+    res.json(await getBranding());
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/admin/branding/logo', requireAdmin, async (req, res, next) => {
+  try {
+    await db.query("DELETE FROM app_settings WHERE name = 'logo'");
+    await logAuditEvent(null, 'branding.logo_removed', req.user.email, req);
+    res.json(await getBranding());
   } catch (err) {
     next(err);
   }

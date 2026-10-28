@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { PenTool, Shield, CheckCircle, ArrowRight, User, Lock } from 'lucide-react';
 import { loginUser } from '../services/authService';
-import { APP_NAME } from '../config/api';
+import { useBranding } from '../services/brandingService';
 
 interface LoginPageProps {
   onLoginSuccess: () => void;
@@ -16,6 +16,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     password: ''
   });
   const [adCredentials, setAdCredentials] = useState({ username: '', password: '' });
+  const branding = useBranding();
 
   // Both tabs sign in through the server; it decides which accounts are admins
   const signIn = async (username: string, password: string, failureMessage: string) => {
@@ -46,12 +47,16 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md flex flex-col justify-center px-8 py-12 bg-white shadow-lg z-10">
-        <div className="flex flex-col items-center mb-6">
-          <div className="w-20 h-20 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg">
-            <PenTool className="w-10 h-10 text-white" />
+        {branding.logoUrl ? (
+          <img src={branding.logoUrl} alt={`${branding.displayName} logo`} className="h-24 w-auto max-w-full object-contain mb-6 self-center" />
+        ) : (
+          <div className="flex flex-col items-center mb-6">
+            <div className="w-20 h-20 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg">
+              <PenTool className="w-10 h-10 text-white" />
+            </div>
+            <span className="mt-3 text-2xl font-bold text-gray-900">{branding.displayName}</span>
           </div>
-          <span className="mt-3 text-2xl font-bold text-gray-900">{APP_NAME}</span>
-        </div>
+        )}
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Welcome Back</h2>
 
         {/* Login Mode Toggle */}
@@ -206,6 +211,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 <span className="text-xs">SSO Ready</span>
               </div>
             </div>
+            {branding.logoUrl && (
+              <p className="mt-4 text-xs text-gray-400">Powered by {branding.appName}</p>
+            )}
           </div>
         </div>
       </div>

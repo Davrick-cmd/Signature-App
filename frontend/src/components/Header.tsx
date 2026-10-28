@@ -1,7 +1,7 @@
 import React from 'react';
 import { FileText, PenTool, Upload, Home, User, BarChart3, Settings } from 'lucide-react';
 import { getCurrentUser, isAdmin } from '../services/authService';
-import { APP_NAME } from '../config/api';
+import { useBranding } from '../services/brandingService';
 
 interface HeaderProps {
   currentView: string;
@@ -11,6 +11,7 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
   const currentUser = getCurrentUser();
   const userIsAdmin = isAdmin();
+  const branding = useBranding();
 
   return (
     <header className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-50">
@@ -18,10 +19,14 @@ const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center space-x-8">
             <div className="flex items-center space-x-2">
-              <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center mr-1">
-                <PenTool className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-xl font-bold text-gray-900">{APP_NAME}</span>
+              {branding.logoUrl ? (
+                <img src={branding.logoUrl} alt={`${branding.displayName} logo`} className="h-10 w-auto max-w-[160px] object-contain mr-2" />
+              ) : (
+                <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center mr-1">
+                  <PenTool className="w-5 h-5 text-white" />
+                </div>
+              )}
+              <span className="text-xl font-bold text-gray-900">{branding.displayName}</span>
               {userIsAdmin && (
                 <span className="bg-red-100 text-red-800 text-xs font-medium px-2 py-1 rounded-full">
                   Admin

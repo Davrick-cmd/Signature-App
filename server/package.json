@@ -10,6 +10,7 @@
     "init-db": "node scripts/init-db.js",
     "create-user": "node scripts/create-user.js",
     "seed-demo": "node scripts/seed-demo.js",
+    "set-branding": "node scripts/set-branding.js",
     "test:e2e": "node tests/e2e.js"
   },
   "engines": {

@@ -28,3 +28,6 @@ services:
         sync: false
       - key: BOOTSTRAP_ADMIN_PASSWORD
         sync: false
+      # Set to "true" for one deploy to reset the admin password, then delete it
+      - key: BOOTSTRAP_ADMIN_RESET
+        sync: false
