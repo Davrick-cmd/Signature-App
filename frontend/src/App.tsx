@@ -215,7 +215,7 @@ function App() {
       case 'reports':
         return <Reports documents={documents} />;
       case 'admin':
-        return <AdminDashboard documents={documents} />;
+        return <AdminDashboard documents={documents} onViewDocument={handleViewDocument} />;
       default:
         return (
           <>

@@ -803,8 +803,12 @@ app.post('/api/documents/:id/sign',
 
 app.get('/api/users', requireAdmin, async (req, res, next) => {
   try {
-    const [rows] = await db.query('SELECT id, username, email, name, role, status, last_login FROM users ORDER BY username');
-    res.json(rows.map((u) => ({ ...u, id: String(u.id) })));
+    const [rows] = await db.query(
+      `SELECT id, username, email, name, role, status, last_login, created_at, is_ldap_user,
+              password_hash IS NOT NULL AS has_password
+       FROM users ORDER BY name`
+    );
+    res.json(rows.map((u) => ({ ...u, id: String(u.id), is_ldap_user: !!u.is_ldap_user, has_password: !!u.has_password })));
   } catch (err) {
     next(err);
   }
@@ -834,6 +838,27 @@ app.post('/api/users',
       );
       await logAuditEvent(null, 'user.created', req.user.email, req, { email, role: req.body.role || 'user' });
       res.status(201).json({ id: String(result.insertId), email, name: req.body.name, role: req.body.role || 'user' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Sets a new password for a local account (admins only)
+app.put('/api/users/:id/password',
+  requireAdmin,
+  [param('id').isInt(), body('password').isString().isLength({ max: 1024 })],
+  validate,
+  async (req, res, next) => {
+    try {
+      const min = settings.getSettings().security.minPasswordLength;
+      if (req.body.password.length < min) return res.status(400).json({ error: `Password must be at least ${min} characters` });
+      const [rows] = await db.query('SELECT id, email, is_ldap_user FROM users WHERE id = ?', [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+      if (rows[0].is_ldap_user) return res.status(400).json({ error: 'This person signs in with Active Directory; change their password there.' });
+      await db.query('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(req.body.password), req.params.id]);
+      await logAuditEvent(null, 'user.password_reset', req.user.email, req, { userId: req.params.id, email: rows[0].email });
+      res.json({ success: true, message: `Password updated for ${rows[0].email}` });
     } catch (err) {
       next(err);
     }

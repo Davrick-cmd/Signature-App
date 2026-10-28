@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../config/api';
+import { API_ENDPOINTS, apiFetch, downloadFile } from '../config/api';
+import UserFormModal from './UserFormModal';
 import BrandingSettings from './BrandingSettings';
 import SystemSettings from './SystemSettings';
 import { 
@@ -11,23 +12,34 @@ import {
   CheckCircle, 
   Clock,
   Search,
-  Filter,
-  MoreVertical,
   UserPlus,
   Download,
-  Mail,
   Trash2,
-  Edit,
   Crown,
+  KeyRound,
   X
 } from 'lucide-react';
 import { Document, User, AdminStats, ActivityLog } from '../types';
 
 interface AdminDashboardProps {
   documents: Document[];
+  onViewDocument?: (document: Document) => void;
 }
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
+// Turns rows into a CSV file and downloads it
+const downloadCsv = (fileName: string, rows: (string | number | null | undefined)[][]) => {
+  const csv = rows
+    .map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+  const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents, onViewDocument }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'documents' | 'settings'>('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState<User[]>([]);
@@ -36,20 +48,32 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUserModal, setShowUserModal] = useState(false);
   const [newRole, setNewRole] = useState<'user' | 'admin'>('user');
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [resetUser, setResetUser] = useState<User | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  // Admins see every document, not only the ones they uploaded
+  const [allDocuments, setAllDocuments] = useState<Document[]>(documents);
+
+  const fetchUsers = async () => {
+    try {
+      const response = await apiFetch('/api/users');
+      if (response.ok) setUsers(await response.json());
+    } catch (error) {
+      console.error('Failed to fetch users', error);
+    }
+  };
+
+  const fetchAllDocuments = async () => {
+    try {
+      const response = await apiFetch(`${API_ENDPOINTS.DOCUMENTS}?filter=all`);
+      if (response.ok) setAllDocuments(await response.json());
+    } catch (error) {
+      console.error('Failed to fetch documents', error);
+    }
+  };
 
   // Fetch data from API
   useEffect(() => {
-    // Fetch users
-    const fetchUsers = async () => {
-      try {
-        const response = await apiFetch('/api/users');
-        const data = await response.json();
-        setUsers(data);
-      } catch (error) {
-        console.error('Failed to fetch users', error);
-      }
-    };
-
     // Fetch admin stats
     const fetchAdminStats = async () => {
       try {
@@ -73,6 +97,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
     };
 
     fetchUsers();
+    fetchAllDocuments();
     fetchAdminStats();
     fetchActivityLogs();
   }, []);
@@ -97,7 +122,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
         setShowUserModal(false);
         setSelectedUser(null);
       } else {
-        console.error('Failed to update user role');
+        const data = await response.json().catch(() => ({}));
+        alert(data.error || 'Could not change the role.');
       }
     } catch (error) {
       console.error('Error updating user role:', error);
@@ -116,7 +142,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
           // Remove user from list
           setUsers(users.filter(user => user.id !== userId));
         } else {
-          console.error('Failed to delete user');
+          const data = await response.json().catch(() => ({}));
+          alert(data.error || 'Could not delete the user.');
         }
       } catch (error) {
         console.error('Error deleting user:', error);
@@ -158,7 +185,45 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
     user.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const filteredDocuments = documents.filter(doc =>
+  const handleDeleteDocument = async (doc: Document) => {
+    if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return;
+    const response = await apiFetch(API_ENDPOINTS.DOCUMENT_DELETE(doc.id), { method: 'DELETE' });
+    if (response.ok) {
+      setAllDocuments((docs) => docs.filter((d) => d.id !== doc.id));
+    } else {
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Could not delete the document.');
+    }
+  };
+
+  const handleDownloadDocument = async (doc: Document) => {
+    try {
+      await downloadFile(API_ENDPOINTS.DOCUMENT_DOWNLOAD(doc.id), `${doc.name}.pdf`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Download failed');
+    }
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const exportDocuments = () => {
+    downloadCsv(`documents-${today}.csv`, [
+      ['Document', 'Status', 'Uploaded by', 'Upload date', 'Signers', 'Signatures', 'Next signer', 'Completed'],
+      ...allDocuments.map((d) => [
+        d.name, d.status, d.uploaded_by, d.uploadDate, d.signers.join('; '),
+        `${d.signatureCount ?? 0}/${d.signers.length}`, d.nextSigner || '', d.completedAt || '',
+      ]),
+    ]);
+    setExportOpen(false);
+  };
+  const exportUsers = () => {
+    downloadCsv(`users-${today}.csv`, [
+      ['Name', 'Email', 'Username', 'Role', 'Sign-in', 'Status', 'Last sign-in'],
+      ...users.map((u) => [u.name, u.email, u.username, u.role, u.is_ldap_user ? 'Active Directory' : 'Local', u.status || 'active', u.last_login || '']),
+    ]);
+    setExportOpen(false);
+  };
+
+  const filteredDocuments = allDocuments.filter(doc =>
     doc.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -194,14 +259,35 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
             <p className="text-gray-600">System administration and management</p>
           </div>
           <div className="flex items-center space-x-4">
-            <button className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+            <button
+              type="button"
+              onClick={() => setShowAddUser(true)}
+              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            >
               <UserPlus className="w-4 h-4" />
               <span>Add User</span>
             </button>
-            <button className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-              <Download className="w-4 h-4" />
-              <span>Export Data</span>
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setExportOpen((o) => !o)}
+                aria-expanded={exportOpen}
+                className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                <span>Export Data</span>
+              </button>
+              {exportOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
+                  <button type="button" onClick={exportDocuments} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                    Documents ({allDocuments.length}) as CSV
+                  </button>
+                  <button type="button" onClick={exportUsers} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                    Users ({users.length}) as CSV
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -430,9 +516,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
                             <Crown className="w-4 h-4" />
                             <span>Privileges</span>
                           </button>
-                          <button className="text-green-600 hover:text-green-700 text-sm font-medium">
-                            <Mail className="w-4 h-4" />
-                          </button>
+                          {!user.is_ldap_user && (
+                            <button
+                              type="button"
+                              onClick={() => setResetUser(user)}
+                              className="text-green-600 hover:text-green-700 text-sm font-medium"
+                              title="Reset password"
+                              aria-label={`Reset password for ${user.name}`}
+                            >
+                              <KeyRound className="w-4 h-4" />
+                            </button>
+                          )}
                           {!user.is_ldap_user && (
                             <button 
                               onClick={() => handleDeleteUser(user.id)}
@@ -525,13 +619,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
                       <td className="py-4 px-6 text-sm text-gray-600">{document.uploadDate}</td>
                       <td className="py-4 px-6">
                         <div className="flex items-center space-x-2">
-                          <button className="text-blue-600 hover:text-blue-700 text-sm font-medium">
+                          <button
+                            type="button"
+                            onClick={() => onViewDocument?.(document)}
+                            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                          >
                             View
                           </button>
-                          <button className="text-green-600 hover:text-green-700 text-sm font-medium">
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadDocument(document)}
+                            disabled={document.status !== 'completed'}
+                            title={document.status === 'completed' ? 'Download signed PDF' : 'Available once everyone has signed'}
+                            className="text-green-600 hover:text-green-700 text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
                             <Download className="w-4 h-4" />
                           </button>
-                          <button className="text-red-600 hover:text-red-700 text-sm font-medium">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDocument(document)}
+                            title="Delete document"
+                            className="text-red-600 hover:text-red-700 text-sm font-medium"
+                          >
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
@@ -551,6 +660,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ documents }) => {
           <BrandingSettings />
           <SystemSettings />
         </div>
+      )}
+
+      {(showAddUser || resetUser) && (
+        <UserFormModal
+          user={resetUser}
+          onClose={() => { setShowAddUser(false); setResetUser(null); }}
+          onSaved={fetchUsers}
+        />
       )}
 
       {/* User Management Modal */}

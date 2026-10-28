@@ -123,6 +123,16 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
   const logs = await api('GET', '/api/admin/activity-logs', admin);
   check('audit trail recorded', logs.json.some((l) => l.action === 'document.completed'));
 
+  const newEmail = `e2e.user${Date.now()}@example.com`;
+  check('non-admin cannot create users', (await api('POST', '/api/users', eve, { email: newEmail, name: 'X', password: 'LongEnough#123' })).status === 403);
+  const created = await api('POST', '/api/users', admin, { email: newEmail, name: 'E2E User', password: 'LongEnough#123' });
+  check('admin creates a user', created.status === 201, JSON.stringify(created.json));
+  check('duplicate user rejected', (await api('POST', '/api/users', admin, { email: newEmail, name: 'E2E User', password: 'LongEnough#123' })).status === 409);
+  check('short password rejected', (await api('PUT', `/api/users/${created.json.id}/password`, admin, { password: 'short' })).status === 400);
+  check('non-admin cannot reset passwords', (await api('PUT', `/api/users/${created.json.id}/password`, eve, { password: 'Another#Pass123' })).status === 403);
+  check('admin resets password', (await api('PUT', `/api/users/${created.json.id}/password`, admin, { password: 'Another#Pass123' })).status === 200);
+  check('new user signs in with reset password', !!(await login(newEmail, 'Another#Pass123')));
+
   check('non-admin cannot change branding', (await api('PUT', '/api/admin/branding', eve, { displayName: 'x' })).status === 403);
   check('branding is public for the login page', (await api('GET', '/api/branding')).status === 200);
 

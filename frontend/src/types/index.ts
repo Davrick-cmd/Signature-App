@@ -8,6 +8,8 @@ export interface Document {
   uploaded_by?: string;
   file_url?: string;
   nextSigner?: string | null;
+  signatureCount?: number;
+  completedAt?: string | null;
   expiresAt?: string | null;
 }
 
@@ -35,6 +37,9 @@ export interface User {
   username: string;
   role: 'user' | 'admin';
   last_login?: string;
+  status?: string;
+  is_ldap_user?: boolean;
+  has_password?: boolean;
 }
 
 export interface AdminStats {
