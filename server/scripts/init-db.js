@@ -4,8 +4,23 @@ const path = require('path');
 const mysql = require('mysql2/promise');
 const config = require('../config');
 
+const TRANSIENT = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'PROTOCOL_CONNECTION_LOST'];
+
+// A newly created cloud database can take a minute to become reachable
+async function connectWithRetry(attempts = 12) {
+  for (let i = 1; ; i++) {
+    try {
+      return await mysql.createConnection({ ...config.db, multipleStatements: true, connectTimeout: 15000 });
+    } catch (err) {
+      if (i >= attempts || !TRANSIENT.includes(err.code)) throw err;
+      console.log(`⏳ Database not reachable yet (${err.code}), retrying in 10s (${i}/${attempts})`);
+      await new Promise((r) => setTimeout(r, 10000));
+    }
+  }
+}
+
 async function initDatabase() {
-  const connection = await mysql.createConnection({ ...config.db, multipleStatements: true });
+  const connection = await connectWithRetry();
   try {
     await connection.query(fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8'));
     console.log(`✅ Database "${config.db.database}" is ready`);

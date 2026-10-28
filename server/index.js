@@ -934,7 +934,7 @@ if (require.main === module) {
       process.exit(0);
     });
   }
-  app.listen(config.port, () => {
+  app.listen(config.port, '0.0.0.0', () => {
     console.log(`🚀 ${config.appName} server running on port ${config.port}`);
   });
 }

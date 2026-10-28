@@ -16,4 +16,5 @@ COPY server/ ./
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
 USER node
 EXPOSE 3001
-CMD ["npm", "start"]
+# Run node directly (not via npm) so it receives stop signals from the platform
+CMD ["sh", "-c", "node scripts/init-db.js && exec node index.js"]
