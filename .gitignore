@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.log
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# User data
+server/uploads/
+uploads/
+
+# Python / OS / editor
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

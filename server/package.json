@@ -1,0 +1,33 @@
+{
+  "name": "signflow-server",
+  "version": "2.1.0",
+  "description": "SignFlow e-signature API (Express + MySQL)",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/init-db.js && node index.js",
+    "dev": "nodemon index.js",
+    "init-db": "node scripts/init-db.js",
+    "create-user": "node scripts/create-user.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.1.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "ldapjs": "^3.0.7",
+    "multer": "^2.0.2",
+    "mysql2": "^3.14.2",
+    "nodemailer": "^7.0.5",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
