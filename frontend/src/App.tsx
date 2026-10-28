@@ -64,18 +64,29 @@ function App() {
       if (!isAuthenticated()) {
         // no-op here; after login effect below will pick it up
       } else {
-        apiFetch(API_ENDPOINTS.DOCUMENT(deeplinkDocId))
-          .then(res => res.json())
-          .then((doc) => {
-            // attach expected signer from link for the viewer
-            (doc as any).__expectedSigner = expectedSigner;
-            setCurrentView('viewer');
-            setSelectedDocument(doc);
-          })
-          .catch(() => {});
+        openDeepLink(deeplinkDocId, expectedSigner);
       }
     }
   }, []);
+
+  // Opens a /sign/:id link from an email; documents the user can't access fall back to the dashboard
+  const openDeepLink = (docId: string, expectedSigner?: string) => {
+    apiFetch(API_ENDPOINTS.DOCUMENT(docId))
+      .then(async (res) => {
+        const doc = await res.json();
+        window.history.replaceState(null, '', '/');
+        if (!res.ok || !Array.isArray(doc.signers)) {
+          alert(doc.error === 'Document not found'
+            ? 'This document does not exist or is not shared with your account.'
+            : doc.error || 'Could not open the document.');
+          return;
+        }
+        (doc as any).__expectedSigner = expectedSigner;
+        setCurrentView('viewer');
+        setSelectedDocument(doc);
+      })
+      .catch(() => {});
+  };
 
   const fetchDocuments = () => {
     const user = getCurrentUser();
@@ -111,14 +122,7 @@ function App() {
       const expectedSigner = params.get('signer') || undefined;
       if (signMatch) {
         const deeplinkDocId = signMatch[1];
-        apiFetch(API_ENDPOINTS.DOCUMENT(deeplinkDocId))
-          .then(res => res.json())
-          .then((doc) => {
-            (doc as any).__expectedSigner = expectedSigner;
-            setCurrentView('viewer');
-            setSelectedDocument(doc);
-          })
-          .catch(() => {});
+        openDeepLink(deeplinkDocId, expectedSigner);
       }
     }, 100); // Small delay to ensure state is updated
   };

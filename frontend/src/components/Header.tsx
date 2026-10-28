@@ -1,7 +1,8 @@
 import React from 'react';
-import { FileText, PenTool, Upload, Home, User, BarChart3, Settings } from 'lucide-react';
+import { PenTool, Upload, Home, User, BarChart3, Settings } from 'lucide-react';
 import { getCurrentUser, isAdmin } from '../services/authService';
 import { useBranding } from '../services/brandingService';
+import ThemeToggle from './ThemeToggle';
 
 interface HeaderProps {
   currentView: string;
@@ -20,7 +21,9 @@ const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
           <div className="flex items-center space-x-8">
             <div className="flex items-center space-x-2">
               {branding.logoUrl ? (
-                <img src={branding.logoUrl} alt={`${branding.displayName} logo`} className="h-10 w-auto max-w-[160px] object-contain mr-2" />
+                <span className="rounded-md bg-white px-1.5 py-0.5 mr-2">
+                  <img src={branding.logoUrl} alt={`${branding.displayName} logo`} className="h-9 w-auto max-w-[150px] object-contain" />
+                </span>
               ) : (
                 <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center mr-1">
                   <PenTool className="w-5 h-5 text-white" />
@@ -100,6 +103,7 @@ const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
           </div>
           
           <div className="flex items-center space-x-4">
+            <ThemeToggle className="w-9 h-9" />
             <div className="flex items-center space-x-3">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
                 userIsAdmin ? 'bg-red-100' : 'bg-blue-100'

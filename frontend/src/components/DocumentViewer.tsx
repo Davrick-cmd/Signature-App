@@ -1166,7 +1166,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
                 {/* PDF Container with Natural Scrolling */}
                 <div className="w-full min-h-[700px] border border-gray-300 rounded relative" style={{ overflow: 'auto', position: 'relative', height: '700px' }}>
                   {document.file_url ? (
-                    <div ref={pageRef} className="relative inline-block align-top">
+                    <div ref={pageRef} className="sf-light relative inline-block align-top">
                       {/* PDF Render using react-pdf to keep overlay in sync with scroll/size */}
                       <PDFDocument
                         key={pdfUrl || 'pdf'}
@@ -1621,7 +1621,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
             
             {/* Content area */}
             <div className="flex-1 overflow-auto p-6" style={{ height: 'calc(95vh - 180px)' }}>
-              <div className="bg-white rounded-lg shadow-lg border border-gray-200 min-h-[700px] relative inline-block align-top">
+              <div className="bg-white rounded-lg shadow-lg border border-gray-200 min-h-[700px] relative inline-block align-top sf-light">
                 {/* PDF Embed */}
                 <div 
                   ref={previewPdfContainerRef}
