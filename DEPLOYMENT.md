@@ -19,6 +19,8 @@ The app keeps documents in the database, so Render's free web service (which has
 
 Free Render services sleep after 15 minutes without traffic. The first visit after that takes about a minute.
 
+**Email on Render's free plan:** Render blocks SMTP ports on free services, so Gmail SMTP will time out there. In Admin → Settings → Email delivery choose **Brevo** (free, sends over HTTPS, can send from a verified Gmail address). On a paid Render instance or your own server, Gmail SMTP works.
+
 ## Option A: one server (VPS) with Docker Compose
 
 Works on any Linux VM (Hetzner, DigitalOcean, AWS Lightsail, Azure, an on-prem server).

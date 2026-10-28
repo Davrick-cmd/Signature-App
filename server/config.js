@@ -87,7 +87,7 @@ if (!config.jwtSecret || config.jwtSecret.length < 32) {
 }
 
 if (config.authProviders.includes('ldap') && !config.ldap.url) {
-  throw new Error('AUTH_PROVIDERS includes "ldap" but LDAP_URL is not set');
+  console.warn('⚠️  AUTH_PROVIDERS includes "ldap" but LDAP_URL is not set; configure it in Admin → Settings');
 }
 
 module.exports = config;

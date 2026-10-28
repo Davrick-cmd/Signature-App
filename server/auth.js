@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const ldap = require('ldapjs');
 const config = require('./config');
 const db = require('./db');
+const { getSettings } = require('./settings');
 
 const scrypt = promisify(crypto.scrypt);
 
@@ -11,7 +12,7 @@ const scrypt = promisify(crypto.scrypt);
 function normalizeEmail(value) {
   if (!value) return '';
   const v = String(value).trim().toLowerCase();
-  return v.includes('@') ? v : `${v}@${config.emailDomain}`;
+  return v.includes('@') ? v : `${v}@${getSettings().general.emailDomain || config.emailDomain}`;
 }
 
 async function hashPassword(password) {
@@ -33,14 +34,27 @@ function escapeLdapFilter(value) {
   return String(value).replace(/[\\*()\0]/g, (c) => '\\' + c.charCodeAt(0).toString(16).padStart(2, '0'));
 }
 
-function ldapAuthenticate(username, password) {
+// Resolves { user } on success or { error } with a reason (shown by the admin's "Test" button)
+function ldapCheck(username, password) {
+  const auth = getSettings().auth;
   return new Promise((resolve) => {
+    const domain = auth.ldapDomain;
     const hasDomain = username.includes('@');
-    const upn = hasDomain ? username : `${username}@${config.ldap.domain}`;
+    const upn = hasDomain ? username : `${username}@${domain}`;
     const sam = hasDomain ? username.split('@')[0] : username;
-    const baseDn = config.ldap.baseDn || `dc=${config.ldap.domain.split('.').join(',dc=')}`;
+    const baseDn = auth.ldapBaseDn || `dc=${domain.split('.').join(',dc=')}`;
 
-    const client = ldap.createClient({ url: config.ldap.url, timeout: 5000, connectTimeout: 5000 });
+    let client;
+    try {
+      client = ldap.createClient({
+        url: auth.ldapUrl,
+        timeout: 8000,
+        connectTimeout: 8000,
+        tlsOptions: { rejectUnauthorized: auth.ldapVerifyTls !== false },
+      });
+    } catch (err) {
+      return resolve({ error: `Invalid LDAP URL: ${err.message}` });
+    }
     let settled = false;
     const finish = (result) => {
       if (settled) return;
@@ -48,25 +62,30 @@ function ldapAuthenticate(username, password) {
       try { client.unbind(() => {}); } catch {}
       resolve(result);
     };
-    client.on('error', (e) => {
-      console.error('LDAP client error:', e?.message || e);
-      finish(null);
-    });
+    client.on('error', (e) => finish({ error: `Could not connect to ${auth.ldapUrl}: ${e?.message || e}` }));
+    client.on('connectTimeout', () => finish({ error: `Timed out connecting to ${auth.ldapUrl}` }));
 
     client.bind(upn, password, (bindErr) => {
-      if (bindErr) return finish(null);
+      if (bindErr) {
+        const unreachable = /timeout|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|connect/i.test(bindErr.message);
+        return finish({
+          error: unreachable
+            ? `Could not connect to ${auth.ldapUrl} (${bindErr.message}). Check the address, port and firewall.`
+            : `Username or password rejected for ${upn} (${bindErr.message})`,
+        });
+      }
 
       const opts = {
         filter: `(sAMAccountName=${escapeLdapFilter(sam)})`,
         scope: 'sub',
         attributes: ['givenName', 'displayName', 'cn', 'mail', 'sAMAccountName'],
       };
-      const timer = setTimeout(() => finish(null), 5000);
+      const timer = setTimeout(() => finish({ error: 'Directory search timed out' }), 8000);
 
       client.search(baseDn, opts, (searchErr, searchRes) => {
         if (searchErr) {
           clearTimeout(timer);
-          return finish(null);
+          return finish({ error: `Search failed under ${baseDn}: ${searchErr.message}` });
         }
         let entry = null;
         searchRes.on('searchEntry', (e) => {
@@ -76,23 +95,31 @@ function ldapAuthenticate(username, password) {
             entry[attr.type] = attr.values && attr.values.length ? attr.values[0] : '';
           });
         });
-        searchRes.on('error', () => {
+        searchRes.on('error', (err) => {
           clearTimeout(timer);
-          finish(null);
+          finish({ error: `Search failed under ${baseDn}: ${err.message}` });
         });
         searchRes.on('end', () => {
           clearTimeout(timer);
-          if (!entry) return finish(null);
+          if (!entry) return finish({ error: `Signed in, but no account named ${sam} was found under ${baseDn}` });
           finish({
-            username: (entry.sAMAccountName || sam).toLowerCase(),
-            email: normalizeEmail(entry.mail || `${sam}@${config.ldap.domain}`),
-            name: entry.displayName || entry.givenName || entry.cn || sam,
-            isLdap: true,
+            user: {
+              username: (entry.sAMAccountName || sam).toLowerCase(),
+              email: normalizeEmail(entry.mail || `${sam}@${domain}`),
+              name: entry.displayName || entry.givenName || entry.cn || sam,
+              isLdap: true,
+            },
           });
         });
       });
     });
   });
+}
+
+async function ldapAuthenticate(username, password) {
+  const result = await ldapCheck(username, password);
+  if (result.error) console.warn('LDAP sign-in failed:', result.error);
+  return result.user || null;
 }
 
 async function localAuthenticate(username, password) {
@@ -106,7 +133,7 @@ async function localAuthenticate(username, password) {
 // Create or refresh the database row for an authenticated identity
 async function upsertUser(identity) {
   const email = identity.email.toLowerCase();
-  const forcedAdmin = config.adminEmails.includes(email);
+  const forcedAdmin = (getSettings().general.adminEmails || []).includes(email);
   const [existing] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
   if (existing.length === 0) {
     await db.query(
@@ -124,11 +151,12 @@ async function upsertUser(identity) {
 }
 
 async function authenticate(username, password) {
-  for (const provider of config.authProviders) {
-    const identity =
-      provider === 'local' ? await localAuthenticate(username, password)
-      : provider === 'ldap' ? await ldapAuthenticate(username, password)
-      : null;
+  const { local, ldap: ldapEnabled } = getSettings().auth;
+  const providers = [local && 'local', ldapEnabled && 'ldap'].filter(Boolean);
+  for (const provider of providers) {
+    const identity = provider === 'local'
+      ? await localAuthenticate(username, password)
+      : await ldapAuthenticate(username, password);
     if (identity) {
       const user = await upsertUser(identity);
       if (user.status !== 'active') return null;
@@ -149,7 +177,7 @@ function publicUser(user) {
 }
 
 function issueToken(user) {
-  return jwt.sign({ sub: String(user.id) }, config.jwtSecret, { expiresIn: config.jwtExpiresIn });
+  return jwt.sign({ sub: String(user.id) }, config.jwtSecret, { expiresIn: `${getSettings().security.sessionHours}h` });
 }
 
 // Verifies the bearer token and loads the current user from the database
@@ -184,6 +212,7 @@ function requireAdmin(req, res, next) {
 }
 
 module.exports = {
+  ldapCheck,
   normalizeEmail,
   hashPassword,
   authenticate,

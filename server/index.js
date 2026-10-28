@@ -11,7 +11,9 @@ const { PDFDocument } = require('pdf-lib');
 const config = require('./config');
 const db = require('./db');
 const mailer = require('./mailer');
+const settings = require('./settings');
 const {
+  ldapCheck,
   normalizeEmail,
   hashPassword,
   authenticate,
@@ -255,7 +257,12 @@ async function generateFinalSignedPDF(doc) {
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 app.get('/api/config', (req, res) => {
-  res.json({ appName: config.appName, authProviders: config.authProviders, emailDomain: config.emailDomain });
+  const { auth, general } = settings.getSettings();
+  res.json({
+    appName: config.appName,
+    authProviders: [auth.local && 'local', auth.ldap && 'ldap'].filter(Boolean),
+    emailDomain: general.emailDomain,
+  });
 });
 
 app.post('/api/auth/login',
@@ -578,9 +585,23 @@ app.post('/api/documents/:id/send',
         });
       }
 
-      if (firstSigner) await mailer.send(...mailer.templates.signRequest(doc, firstSigner, { note: doc.message }));
-      await logAuditEvent(doc.id, 'document.sent', req.user.email, req, { firstSigner, totalSigners: signers.length });
-      res.json({ success: true, message: `Document sent to ${firstSigner} for signature`, firstSigner, totalSigners: signers.length });
+      let emailWarning;
+      try {
+        if (firstSigner) await mailer.send(...mailer.templates.signRequest(doc, firstSigner, { note: doc.message }));
+      } catch (err) {
+        emailWarning = mailer.explainEmailError(err);
+        console.error('Signing request email failed:', emailWarning);
+      }
+      await logAuditEvent(doc.id, 'document.sent', req.user.email, req, { firstSigner, totalSigners: signers.length, emailWarning });
+      res.json({
+        success: true,
+        message: emailWarning
+          ? `Document is ready for ${firstSigner}, but the email could not be sent: ${emailWarning}`
+          : `Document sent to ${firstSigner} for signature`,
+        firstSigner,
+        totalSigners: signers.length,
+        emailWarning,
+      });
     } catch (err) {
       next(err);
     }
@@ -597,7 +618,11 @@ async function notifyNextSigner(req, res, next, { reminder }) {
       return res.status(409).json({ error: 'There is no pending signer for this document' });
     }
     const note = req.body?.message ? String(req.body.message).slice(0, 2000) : doc.message;
-    await mailer.send(...mailer.templates.signRequest(doc, nextSigner, { reminder, note }));
+    try {
+      await mailer.send(...mailer.templates.signRequest(doc, nextSigner, { reminder, note }));
+    } catch (err) {
+      return res.status(502).json({ error: `Email could not be sent: ${mailer.explainEmailError(err)}` });
+    }
     await logAuditEvent(doc.id, reminder ? 'document.reminded' : 'document.shared', req.user.email, req, { to: nextSigner });
     res.json({ success: true, message: `${reminder ? 'Reminder' : 'Request'} sent to ${nextSigner}.`, to: nextSigner });
   } catch (err) {
@@ -790,7 +815,11 @@ app.post('/api/users',
   [
     body('email').isEmail(),
     body('name').isString().trim().isLength({ min: 1, max: 255 }),
-    body('password').isString().isLength({ min: 10, max: 1024 }).withMessage('Password must be at least 10 characters'),
+    body('password').isString().isLength({ max: 1024 }).custom((value) => {
+      const min = settings.getSettings().security.minPasswordLength;
+      if (String(value).length < min) throw new Error(`Password must be at least ${min} characters`);
+      return true;
+    }),
     body('role').optional().isIn(['user', 'admin']),
   ],
   validate,
@@ -883,6 +912,50 @@ app.delete('/api/admin/branding/logo', requireAdmin, async (req, res, next) => {
     next(err);
   }
 });
+
+app.get('/api/admin/settings', requireAdmin, (req, res) => {
+  res.json(settings.publicSettings());
+});
+
+app.put('/api/admin/settings', requireAdmin, async (req, res, next) => {
+  try {
+    const updated = await settings.updateSettings(req.body?.settings || {}, req.body?.clearSecrets || []);
+    const changed = Object.fromEntries(Object.entries(req.body?.settings || {}).map(([k, v]) => [k, Object.keys(v || {})]));
+    await logAuditEvent(null, 'settings.updated', req.user.email, req, { changed });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/settings/test-email', requireAdmin, strictLimiter, [body('to').isEmail()], validate, async (req, res) => {
+  try {
+    const result = await mailer.send(...mailer.templates.test(req.body.to));
+    if (!result.delivered) {
+      return res.status(400).json({ error: 'No email service is configured. Choose SMTP or Brevo and save first.' });
+    }
+    await logAuditEvent(null, 'settings.test_email', req.user.email, req, { to: req.body.to });
+    res.json({ success: true, message: `Test email sent to ${req.body.to}. Check the inbox (and spam folder).` });
+  } catch (err) {
+    res.status(502).json({ error: mailer.explainEmailError(err) });
+  }
+});
+
+app.post('/api/admin/settings/test-ldap',
+  requireAdmin,
+  strictLimiter,
+  [body('username').isString().trim().notEmpty(), body('password').isString().notEmpty()],
+  validate,
+  async (req, res) => {
+    const { auth } = settings.getSettings();
+    if (!auth.ldapUrl || !auth.ldapDomain) {
+      return res.status(400).json({ error: 'Save an LDAP server URL and domain first.' });
+    }
+    const result = await ldapCheck(req.body.username, req.body.password);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json({ success: true, message: `Connected. Found ${result.user.name} <${result.user.email}>.`, user: result.user });
+  }
+);
 
 app.get('/api/admin/stats', requireAdmin, async (req, res, next) => {
   try {
@@ -1004,7 +1077,8 @@ async function cancelExpiredDocuments() {
   }
 }
 
-if (require.main === module) {
+async function start() {
+  await settings.loadSettings();
   const timer = setInterval(cancelExpiredDocuments, 60 * 60 * 1000);
   cancelExpiredDocuments();
   for (const signal of ['SIGTERM', 'SIGINT']) {
@@ -1015,6 +1089,13 @@ if (require.main === module) {
   }
   app.listen(config.port, '0.0.0.0', () => {
     console.log(`🚀 ${config.appName} server running on port ${config.port}`);
+  });
+}
+
+if (require.main === module) {
+  start().catch((err) => {
+    console.error('❌ Failed to start:', err.message);
+    process.exit(1);
   });
 }
 

@@ -13,6 +13,28 @@ Self-hosted electronic signature platform. Upload a PDF, place signature fields,
 - **Admin console**: users, roles, usage statistics and an activity log
 - **Audit trail**: every upload, send, view, signature, download and login, with IP and user agent
 
+## Admin settings
+
+Admins configure the installation in **Admin → Settings**, without editing files or redeploying:
+
+| Card | What it controls |
+|------|------------------|
+| Branding | Customer logo and product name |
+| Email delivery | Off, **SMTP** (presets for Gmail and Microsoft 365, or any server) or **Brevo** (HTTPS API), plus sender name/address and a **Send test email** button |
+| Sign-in methods | Local accounts and/or **Active Directory / LDAP** (server URL, domain, search base, certificate check) with a **Test sign-in** button |
+| General | App address used in email links, default email domain, admin emails |
+| Security | Session length, minimum password length for local accounts |
+
+Settings are stored in the database. Passwords and API keys are encrypted with `SETTINGS_KEY` (or `JWT_SECRET` if not set) and are never sent back to the browser. Environment variables are only the starting defaults.
+
+### Email with Gmail
+
+1. Turn on 2-Step Verification for the Google account.
+2. Create an App Password: Google Account → Security → 2-Step Verification → **App passwords**.
+3. In Admin → Settings → Email delivery choose **SMTP → Gmail**, enter the Gmail address as username and the 16-character App Password, use the same address as sender, then **Save & send test**.
+
+Hosts that block SMTP ports (Render's free plan blocks 25, 465 and 587) cannot use SMTP. Choose **Brevo** instead: create a free account at brevo.com, verify your sender address (a Gmail address works), and paste an API key.
+
 ## Customer branding
 
 Each installation can show its own logo and product name (for example "Acme Sign") on the sign-in page, the header and the browser tab. An admin sets these in **Admin → Settings → Branding**, or from the command line:

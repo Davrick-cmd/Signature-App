@@ -1,17 +1,46 @@
 const nodemailer = require('nodemailer');
 const config = require('./config');
+const { getSettings } = require('./settings');
 
-const transporter = config.smtp.host
-  ? nodemailer.createTransport({
-      host: config.smtp.host,
-      port: config.smtp.port,
-      secure: config.smtp.secure,
-      auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.pass } : undefined,
-    })
-  : null;
+// Rebuilt whenever the SMTP settings change in Admin → Settings
+let smtpCache = { key: null, transporter: null };
 
-if (!transporter) {
-  console.warn('⚠️  SMTP_HOST not set - emails will be printed to the console instead of sent');
+function smtpTransporter(email) {
+  const key = JSON.stringify([email.smtpHost, email.smtpPort, email.smtpSecure, email.smtpUser, email.smtpPass]);
+  if (smtpCache.key !== key) {
+    smtpCache = {
+      key,
+      transporter: nodemailer.createTransport({
+        host: email.smtpHost,
+        port: email.smtpPort,
+        // true = TLS from the start (port 465); false = STARTTLS upgrade (port 587)
+        secure: email.smtpSecure,
+        auth: email.smtpUser ? { user: email.smtpUser, pass: email.smtpPass } : undefined,
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+      }),
+    };
+  }
+  return smtpCache.transporter;
+}
+
+// Brevo sends over HTTPS, so it works on hosts that block SMTP ports (e.g. Render's free plan)
+async function sendViaBrevo(email, { to, subject, html }) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': email.brevoApiKey, 'Content-Type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      sender: { name: email.fromName || config.appName, email: email.fromEmail },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(`Brevo rejected the email (${res.status}): ${body.message || res.statusText}`);
+  }
 }
 
 function escapeHtml(value) {
@@ -27,7 +56,8 @@ function escapeHtml(value) {
 const oneLine = (value) => String(value ?? '').replace(/[\r\n]+/g, ' ').slice(0, 200);
 
 function signLink(documentId, signerEmail) {
-  return `${config.appUrl}/sign/${encodeURIComponent(documentId)}?signer=${encodeURIComponent(signerEmail)}`;
+  const base = getSettings().general.appUrl || config.appUrl;
+  return `${base}/sign/${encodeURIComponent(documentId)}?signer=${encodeURIComponent(signerEmail)}`;
 }
 
 // All values passed in `rows` and `paragraphs` are escaped here
@@ -42,17 +72,35 @@ function layout({ title, color = '#2563eb', paragraphs = [], rows = [], button }
       ${paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join('')}
       ${rowHtml ? `<div style="background:#f8fafc;padding:15px;margin:20px 0;border-radius:6px;border-left:4px solid ${color};">${rowHtml}</div>` : ''}
       ${button ? `<div style="text-align:center;margin:30px 0;"><a href="${escapeHtml(button.href)}" style="background:${color};color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;">${escapeHtml(button.label)}</a></div>` : ''}
-      <p>Thank you,<br>${escapeHtml(config.appName)}</p>
+      <p>Thank you,<br>${escapeHtml(getSettings().email.fromName || config.appName)}</p>
     </div>`;
 }
 
 async function send(to, subject, html) {
-  const message = { from: config.mailFrom, to, subject: oneLine(subject), html };
-  if (!transporter) {
-    console.log(`📧 [email not sent - SMTP disabled] to=${to} subject="${message.subject}"`);
-    return;
+  const email = getSettings().email;
+  const message = { to, subject: oneLine(subject), html };
+  if (email.transport === 'smtp' && email.smtpHost) {
+    const fromEmail = email.fromEmail || email.smtpUser;
+    await smtpTransporter(email).sendMail({ ...message, from: { name: oneLine(email.fromName || config.appName), address: fromEmail } });
+  } else if (email.transport === 'brevo' && email.brevoApiKey && email.fromEmail) {
+    await sendViaBrevo(email, message);
+  } else {
+    console.log(`📧 [email not sent - no email service configured] to=${to} subject="${message.subject}"`);
+    return { delivered: false };
   }
-  await transporter.sendMail(message);
+  return { delivered: true };
+}
+
+// Turns transport errors into advice an admin can act on
+function explainEmailError(err) {
+  const msg = err?.message || String(err);
+  if (/ETIMEDOUT|ECONNREFUSED|ENETUNREACH|Greeting never received|Connection timeout/i.test(msg)) {
+    return `Could not reach the mail server (${msg}). If this app runs on Render's free plan, SMTP ports are blocked there: use Brevo instead, or upgrade the instance.`;
+  }
+  if (/Invalid login|Username and Password not accepted|535/i.test(msg)) {
+    return `The mail server rejected the username or password (${msg}). For Gmail, use an App Password, not your normal password.`;
+  }
+  return msg;
 }
 
 // Failures are logged rather than thrown so email outages never block signing
@@ -65,6 +113,16 @@ async function sendSafe(to, subject, html) {
 }
 
 const templates = {
+  test: (to) => [
+    to,
+    `Test email from ${getSettings().email.fromName || config.appName}`,
+    layout({
+      title: 'Email is working',
+      color: '#16a34a',
+      paragraphs: ['This test message confirms that signing requests and notifications can be delivered.'],
+      rows: [['Sent at', new Date().toISOString()], ['Delivery method', getSettings().email.transport.toUpperCase()]],
+    }),
+  ],
   signRequest: (doc, signer, { reminder = false, note } = {}) => [
     signer,
     `${reminder ? 'Reminder: ' : 'Action Required: '}Sign "${doc.name}"`,
@@ -115,4 +173,4 @@ const templates = {
   ],
 };
 
-module.exports = { send, sendSafe, templates, escapeHtml };
+module.exports = { send, sendSafe, templates, escapeHtml, explainEmailError };
