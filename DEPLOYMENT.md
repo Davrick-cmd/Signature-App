@@ -1,6 +1,23 @@
 # Deploying SignFlow
 
-SignFlow ships as a single Docker image: the API also serves the web app. You need that image, a MySQL 8 database and a persistent disk for uploaded files.
+SignFlow ships as a single Docker image: the API also serves the web app. You need that image and a MySQL 8 database; documents are stored in the database, so no persistent disk is required.
+
+## Free hosted demo: Render + Aiven MySQL
+
+The app keeps documents in the database, so Render's free web service (which has no persistent disk) works.
+
+1. **Database**: create a free MySQL service at [console.aiven.io](https://console.aiven.io) (Create service → MySQL → Free plan). When it shows *Running*, copy the **Service URI**. It looks like `mysql://avnadmin:…@….aivencloud.com:12345/defaultdb?ssl-mode=REQUIRED`.
+2. **App**: open `https://render.com/deploy?repo=https://github.com/Davrick-cmd/Signature-App`, sign in, and fill in:
+   - `DATABASE_URL`: the Service URI from step 1
+   - `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`: your first admin login
+3. Click **Apply**. The first build takes about 5–10 minutes. The app URL appears on the service page (`https://signflow-xxxx.onrender.com`).
+4. Optional: load demo users and sample documents:
+   ```bash
+   cd server
+   SEED_BASE=https://signflow-xxxx.onrender.com SEED_ADMIN_EMAIL=… SEED_ADMIN_PASSWORD=… DEMO_PASSWORD=… npm run seed-demo
+   ```
+
+Free Render services sleep after 15 minutes without traffic. The first visit after that takes about a minute.
 
 ## Option A: one server (VPS) with Docker Compose
 
@@ -23,15 +40,14 @@ sign.yourcompany.com {
 
 Then set `APP_URL=https://sign.yourcompany.com` and `TRUST_PROXY=1` in `.env`, and run `docker compose up -d`.
 
-Back up the `db-data` and `uploads` Docker volumes.
+Back up the `db-data` Docker volume (documents are stored in the database).
 
 ## Option B: managed platform (Railway, Render, Fly.io)
 
 1. Create a MySQL database (Railway has one built in; on other platforms use a managed MySQL such as Aiven, PlanetScale or AWS RDS).
 2. Create a web service from this repository using the `Dockerfile`.
-3. Attach a persistent volume mounted at `/app/server/uploads`.
-4. Set the environment variables from `.env.example`, plus `NODE_ENV=production` and `TRUST_PROXY=1`.
-5. Deploy. Tables and the bootstrap admin are created automatically on first start.
+3. Set the environment variables from `.env.example` (or `DATABASE_URL`), plus `NODE_ENV=production` and `TRUST_PROXY=1`.
+4. Deploy. Tables and the bootstrap admin are created automatically on first start.
 
 ## Running a public demo
 
@@ -47,4 +63,4 @@ Back up the `db-data` and `uploads` Docker volumes.
 - [ ] SMTP credentials configured and `MAIL_FROM` uses a domain with SPF/DKIM
 - [ ] For Active Directory, use `ldaps://`
 - [ ] Remove `BOOTSTRAP_ADMIN_PASSWORD` from the environment after the first sign-in
-- [ ] Daily backups of the database and the uploads volume
+- [ ] Daily backups of the database

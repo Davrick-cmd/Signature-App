@@ -14,8 +14,6 @@ COPY server/package*.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY server/ ./
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
-RUN mkdir -p /app/server/uploads && chown -R node:node /app/server/uploads
 USER node
 EXPOSE 3001
-VOLUME ["/app/server/uploads"]
 CMD ["npm", "start"]

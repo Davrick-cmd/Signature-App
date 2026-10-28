@@ -1,0 +1,30 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Free web service. Files are stored in MySQL, so the service keeps nothing on disk.
+services:
+  - type: web
+    name: signflow
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: APP_NAME
+        value: SignFlow
+      - key: AUTH_PROVIDERS
+        value: local
+      - key: EMAIL_DOMAIN
+        value: example.com
+      - key: JWT_SECRET
+        generateValue: true
+      # mysql://user:password@host:port/dbname?ssl-mode=REQUIRED (e.g. from Aiven)
+      - key: DATABASE_URL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

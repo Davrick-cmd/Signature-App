@@ -50,3 +50,12 @@ CREATE TABLE IF NOT EXISTS audit_trail_events (
     INDEX idx_audit_timestamp (timestamp),
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS document_files (
+    document_id INT NOT NULL,
+    kind ENUM('original', 'signed') NOT NULL,
+    data LONGBLOB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (document_id, kind),
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);

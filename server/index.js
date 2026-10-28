@@ -13,14 +13,13 @@ const db = require('./db');
 const mailer = require('./mailer');
 const {
   normalizeEmail,
+  hashPassword,
   authenticate,
   publicUser,
   issueToken,
   requireAuth,
   requireAdmin,
 } = require('./auth');
-
-fs.mkdirSync(config.uploadDir, { recursive: true });
 
 const app = express();
 const trustProxy = /^\d+$/.test(String(config.trustProxy)) ? Number(config.trustProxy) : config.trustProxy;
@@ -52,6 +51,16 @@ const strictLimiter = rateLimit({
   message: { error: 'Too many attempts, please try again later.' },
 });
 
+// Only failed sign-ins count toward this limit
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many failed sign-in attempts, please try again later.' },
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 const validate = (req, res, next) => {
@@ -81,12 +90,21 @@ function parseList(value) {
 
 const lower = (v) => String(v || '').trim().toLowerCase();
 
-function storedFilePath(doc) {
-  return doc.file_path ? path.join(config.uploadDir, path.basename(doc.file_path)) : null;
+// File bytes live in the database so the app server keeps no state on disk.
+// Installs from before that change still have files in UPLOAD_DIR, read as a fallback.
+async function getFile(doc, kind) {
+  const [rows] = await db.query('SELECT data FROM document_files WHERE document_id = ? AND kind = ?', [doc.id, kind]);
+  if (rows[0]) return rows[0].data;
+  if (!doc.file_path) return null;
+  const legacy = path.join(config.uploadDir, `${kind === 'signed' ? 'signed_' : ''}${path.basename(doc.file_path)}`);
+  return fs.existsSync(legacy) ? fs.promises.readFile(legacy) : null;
 }
 
-function signedFilePath(doc) {
-  return doc.file_path ? path.join(config.uploadDir, `signed_${path.basename(doc.file_path)}`) : null;
+async function putFile(documentId, kind, data) {
+  await db.query(
+    'INSERT INTO document_files (document_id, kind, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)',
+    [documentId, kind, Buffer.from(data)]
+  );
 }
 
 function hasSigned(signatures, email) {
@@ -195,10 +213,10 @@ const idParam = param('id').isInt({ min: 1 }).withMessage('Invalid document ID')
 
 async function generateFinalSignedPDF(doc) {
   const signatures = parseList(doc.signature_data);
-  const sourcePath = storedFilePath(doc);
-  if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error('Original document file not found');
+  const original = await getFile(doc, 'original');
+  if (!original) throw new Error('Original document file not found');
 
-  const pdfDoc = await PDFDocument.load(fs.readFileSync(sourcePath));
+  const pdfDoc = await PDFDocument.load(original);
   const pageCount = pdfDoc.getPageCount();
 
   for (const sig of signatures) {
@@ -225,9 +243,9 @@ async function generateFinalSignedPDF(doc) {
     }
   }
 
-  const outPath = signedFilePath(doc);
-  fs.writeFileSync(outPath, await pdfDoc.save());
-  return outPath;
+  const signed = Buffer.from(await pdfDoc.save());
+  await putFile(doc.id, 'signed', signed);
+  return signed;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +259,7 @@ app.get('/api/config', (req, res) => {
 });
 
 app.post('/api/auth/login',
-  strictLimiter,
+  loginLimiter,
   [
     body('username').isString().trim().isLength({ min: 1, max: 255 }),
     body('password').isString().isLength({ min: 1, max: 1024 }),
@@ -274,13 +292,7 @@ const ALLOWED_MIME = {
 };
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, config.uploadDir),
-    filename: (req, file, cb) => {
-      const ext = { 'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg' }[file.mimetype];
-      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: config.maxUploadBytes, files: 1 },
   fileFilter: (req, file, cb) => {
     if (ALLOWED_MIME[file.mimetype]) return cb(null, true);
@@ -289,15 +301,11 @@ const upload = multer({
 });
 
 app.post('/api/upload', upload.single('document'), async (req, res, next) => {
-  const removeUpload = () => req.file && fs.promises.unlink(req.file.path).catch(() => {});
+  const removeUpload = () => {};
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const head = Buffer.alloc(8);
-    const fd = await fs.promises.open(req.file.path, 'r');
-    await fd.read(head, 0, 8, 0);
-    await fd.close();
-    if (!ALLOWED_MIME[req.file.mimetype](head)) {
+    if (!ALLOWED_MIME[req.file.mimetype](req.file.buffer)) {
       removeUpload();
       return res.status(400).json({ error: 'File content does not match its type' });
     }
@@ -336,7 +344,7 @@ app.post('/api/upload', upload.single('document'), async (req, res, next) => {
        VALUES (?, ?, ?, ?, 'pending', ?, CURDATE(), ?, ?, ?)`,
       [
         docName,
-        req.file.filename,
+        String(req.file.originalname).slice(0, 255),
         req.file.mimetype,
         req.file.size,
         JSON.stringify(signerList),
@@ -345,6 +353,8 @@ app.post('/api/upload', upload.single('document'), async (req, res, next) => {
         message ? String(message).slice(0, 2000) : null,
       ]
     );
+
+    await putFile(result.insertId, 'original', req.file.buffer);
 
     await logAuditEvent(result.insertId, 'document.uploaded', req.user.email, req, {
       documentName: docName,
@@ -393,11 +403,15 @@ app.get('/api/documents/:id', [idParam], validate, loadDocument(canView), (req, 
   res.json(serializeDocument(req.doc));
 });
 
-app.get('/api/documents/:id/file', [idParam], validate, loadDocument(canView), (req, res) => {
-  const filePath = storedFilePath(req.doc);
-  if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-  res.setHeader('Cache-Control', 'private, no-store');
-  res.type(req.doc.mime_type || 'application/pdf').sendFile(filePath);
+app.get('/api/documents/:id/file', [idParam], validate, loadDocument(canView), async (req, res, next) => {
+  try {
+    const data = await getFile(req.doc, 'original');
+    if (!data) return res.status(404).json({ error: 'File not found' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.type(req.doc.mime_type || 'application/pdf').send(data);
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get('/api/documents/:id/download', [idParam], validate, loadDocument(canManage), async (req, res, next) => {
@@ -406,18 +420,19 @@ app.get('/api/documents/:id/download', [idParam], validate, loadDocument(canMana
     if (doc.status !== 'completed') {
       return res.status(409).json({ error: 'Document not completed. Download is available after all signatures.' });
     }
-    let filePath = signedFilePath(doc);
-    if (!fs.existsSync(filePath)) {
+    let data = await getFile(doc, 'signed');
+    if (!data) {
       try {
-        filePath = await generateFinalSignedPDF(doc);
+        data = await generateFinalSignedPDF(doc);
       } catch (err) {
         console.error('Error generating final PDF for download:', err.message);
-        filePath = storedFilePath(doc);
+        data = await getFile(doc, 'original');
       }
     }
-    if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    if (!data) return res.status(404).json({ error: 'File not found' });
     await logAuditEvent(doc.id, 'document.downloaded', req.user.email, req, { documentName: doc.name });
-    res.download(filePath, doc.name.toLowerCase().endsWith('.pdf') ? doc.name : `${doc.name}.pdf`);
+    const fileName = doc.name.toLowerCase().endsWith('.pdf') ? doc.name : `${doc.name}.pdf`;
+    res.attachment(fileName).type('application/pdf').send(data);
   } catch (err) {
     next(err);
   }
@@ -485,10 +500,8 @@ app.post('/api/documents/:id/fields',
 
 app.delete('/api/documents/:id', [idParam], validate, loadDocument(canManage), async (req, res, next) => {
   try {
+    // document_files rows are removed by ON DELETE CASCADE
     await db.query('DELETE FROM documents WHERE id = ?', [req.doc.id]);
-    for (const p of [storedFilePath(req.doc), signedFilePath(req.doc)]) {
-      if (p) await fs.promises.unlink(p).catch(() => {});
-    }
     await logAuditEvent(null, 'document.deleted', req.user.email, req, { documentId: req.doc.id, documentName: req.doc.name });
     res.json({ success: true, message: 'Document deleted successfully', deletedId: String(req.doc.id) });
   } catch (err) {
@@ -738,6 +751,32 @@ app.get('/api/users', requireAdmin, async (req, res, next) => {
     next(err);
   }
 });
+
+app.post('/api/users',
+  requireAdmin,
+  [
+    body('email').isEmail(),
+    body('name').isString().trim().isLength({ min: 1, max: 255 }),
+    body('password').isString().isLength({ min: 10, max: 1024 }).withMessage('Password must be at least 10 characters'),
+    body('role').optional().isIn(['user', 'admin']),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const email = normalizeEmail(req.body.email);
+      const [existing] = await db.query('SELECT id FROM users WHERE email = ? OR username = ?', [email, email.split('@')[0]]);
+      if (existing.length) return res.status(409).json({ error: 'A user with this email or username already exists' });
+      const [result] = await db.query(
+        'INSERT INTO users (username, email, name, role, password_hash, is_ldap_user) VALUES (?, ?, ?, ?, ?, FALSE)',
+        [email.split('@')[0], email, req.body.name, req.body.role || 'user', await hashPassword(req.body.password)]
+      );
+      await logAuditEvent(null, 'user.created', req.user.email, req, { email, role: req.body.role || 'user' });
+      res.status(201).json({ id: String(result.insertId), email, name: req.body.name, role: req.body.role || 'user' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 app.put('/api/users/:id/role',
   requireAdmin,

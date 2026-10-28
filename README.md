@@ -43,7 +43,7 @@ docker compose up -d --build
 
 Open http://localhost:3001 and sign in with the bootstrap admin account.
 
-Add more local users:
+Add more local users (or use `POST /api/users` as an admin):
 
 ```bash
 docker compose exec app node scripts/create-user.js jane@example.com "Jane Doe"
@@ -83,8 +83,9 @@ server/     Express API
   auth.js         sign-in, sessions, permissions
   mailer.js       email templates and delivery
   schema.sql      database schema
-  scripts/        init-db, create-user
+  scripts/        init-db, create-user, seed-demo
+  tests/          end-to-end security tests
 Dockerfile, docker-compose.yml
 ```
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for production hosting.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for production hosting, including a free Render demo ([render.yaml](render.yaml)).
