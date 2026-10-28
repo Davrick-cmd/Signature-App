@@ -264,6 +264,8 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
 
   const documentAreaRef = useRef<HTMLDivElement>(null);
   const documentContentRef = useRef<HTMLDivElement>(null);
+  // Wraps exactly the rendered PDF page; field positions are percentages of this box
+  const pageRef = useRef<HTMLDivElement>(null);
   const previewPdfContainerRef = useRef<HTMLDivElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [signatureModalOpen, setSignatureModalOpen] = useState(false);
@@ -541,7 +543,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (draggingFieldId) {
-      const rect = e.currentTarget.getBoundingClientRect();
+      const rect = (pageRef.current ?? e.currentTarget).getBoundingClientRect();
       const x = e.clientX - rect.left - dragOffset.x;
       const y = e.clientY - rect.top - dragOffset.y;
       
@@ -559,7 +561,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
         } : f
       ));
     } else if (resizingFieldId && resizeStart) {
-      const rect = e.currentTarget.getBoundingClientRect();
+      const rect = (pageRef.current ?? e.currentTarget).getBoundingClientRect();
       const width = Math.max(40, e.clientX - rect.left - resizeStart.x);
       const height = Math.max(20, e.clientY - rect.top - resizeStart.y);
       
@@ -588,8 +590,8 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
   React.useEffect(() => {
     if (!draggingFieldId) return;
     const handleMove = (e: MouseEvent) => {
-      if (!documentAreaRef.current) return;
-      const rect = documentAreaRef.current.getBoundingClientRect();
+      if (!pageRef.current) return;
+      const rect = pageRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left - dragOffset.x;
       const y = e.clientY - rect.top - dragOffset.y;
       
@@ -658,8 +660,8 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
                   x: Math.max(0, field.x + deltaX),
                   y: Math.max(0, field.y + deltaY),
                   // Update relative positions based on container size
-                  relativeX: documentContentRef.current ? Math.max(0, ((field.x + deltaX) / documentContentRef.current.getBoundingClientRect().width) * 100) : field.relativeX,
-                  relativeY: documentContentRef.current ? Math.max(0, ((field.y + deltaY) / documentContentRef.current.getBoundingClientRect().height) * 100) : field.relativeY
+                  relativeX: pageRef.current ? Math.max(0, ((field.x + deltaX) / pageRef.current.getBoundingClientRect().width) * 100) : field.relativeX,
+                  relativeY: pageRef.current ? Math.max(0, ((field.y + deltaY) / pageRef.current.getBoundingClientRect().height) * 100) : field.relativeY
                 }
               : field
           )
@@ -1164,7 +1166,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
                 {/* PDF Container with Natural Scrolling */}
                 <div className="w-full min-h-[700px] border border-gray-300 rounded relative" style={{ overflow: 'auto', position: 'relative', height: '700px' }}>
                   {document.file_url ? (
-                    <>
+                    <div ref={pageRef} className="relative inline-block align-top">
                       {/* PDF Render using react-pdf to keep overlay in sync with scroll/size */}
                       <PDFDocument
                         key={pdfUrl || 'pdf'}
@@ -1447,7 +1449,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
                           }
                         })}
                       </div>
-                    </>
+                    </div>
                   ) : (
                     <div className="flex items-center justify-center h-full text-gray-500">
                       <p>No document file available</p>
@@ -1619,7 +1621,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, onBack, onDoc
             
             {/* Content area */}
             <div className="flex-1 overflow-auto p-6" style={{ height: 'calc(95vh - 180px)' }}>
-              <div className="bg-white rounded-lg shadow-lg border border-gray-200 min-h-[700px] relative">
+              <div className="bg-white rounded-lg shadow-lg border border-gray-200 min-h-[700px] relative inline-block align-top">
                 {/* PDF Embed */}
                 <div 
                   ref={previewPdfContainerRef}

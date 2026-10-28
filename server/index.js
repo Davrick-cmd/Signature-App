@@ -124,6 +124,20 @@ function isExpired(doc) {
   return !!doc.expires_at && new Date(doc.expires_at) < new Date();
 }
 
+function formatSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDate(value) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d)) return String(value);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function serializeDocument(row) {
   const signers = parseList(row.signers);
   const signatures = parseList(row.signature_data);
@@ -131,9 +145,10 @@ function serializeDocument(row) {
     id: String(row.id),
     name: row.name,
     status: row.status,
-    uploadDate: row.upload_date,
+    uploadDate: formatDate(row.upload_date),
     signers,
-    size: row.size,
+    size: formatSize(row.size),
+    sizeBytes: Number(row.size) || 0,
     uploaded_by: row.uploaded_by,
     file_url: row.file_path ? `/api/documents/${row.id}/file` : null,
     mime_type: row.mime_type,
